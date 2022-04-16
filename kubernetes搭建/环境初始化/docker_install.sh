@@ -26,6 +26,6 @@ cat > /etc/docker/daemon.json <<EOF
 EOF
 
 systemctl daemon-reload
-systemctl start docker
+systemctl restart docker
 systemctl enable docker
 echo " docker install success"
