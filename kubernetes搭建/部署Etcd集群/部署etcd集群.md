@@ -187,6 +187,7 @@ ETCD_ADVERTISE_CLIENT_URLS="https://127.0.0.1:2379,https://0.0.0.0:2379"
 ETCD_INITIAL_CLUSTER="etcd-01=https://192.168.10.162:2380,etcd-02=https://192.168.10.190:2380,etcd-03=https://192.168.10.191:2380"
 ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster"
 ETCD_INITIAL_CLUSTER_STATE="new"
+ETCD_ENABLE_V2="true"
 
 #[Security]
 ETCD_CERT_FILE="/data/apps/etcd/ssl/etcd.pem"
@@ -216,6 +217,7 @@ scp -r /data/apps/etcd/etc/etcd.conf 192.168.10.191:/data/apps/etcd/etc/
 # 162服务器
 sed -i "s/0.0.0.0/192.168.10.162/g" /data/apps/etcd/etc/etcd.conf
 sed -i "s/ename/etcd-01/g" /data/apps/etcd/etc/etcd.conf
+sed -i "s/ETCD_ENABLE-V2/ETCD_ENABLE_V2/g" /data/apps/etcd/etc/etcd.conf
 # 190服务器
 sed -i "s/0.0.0.0/192.168.10.190/g" /data/apps/etcd/etc/etcd.conf
 sed -i "s/ename/etcd-02/g" /data/apps/etcd/etc/etcd.conf
@@ -267,10 +269,7 @@ scp -r /usr/lib/systemd/system/etcd.service 192.168.10.191:/usr/lib/systemd/syst
 
 ~~~powershell
 useradd -r etcd && chown etcd.etcd -R /data/apps/etcd
-systemctl daemon-reload
-systemctl enable etcd
-systemctl start etcd
-systemctl status etcd
+systemctl daemon-reload && systemctl enable etcd && systemctl restart etcd && systemctl status etcd
 
 ~~~
 
