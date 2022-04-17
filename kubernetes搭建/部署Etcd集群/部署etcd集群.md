@@ -187,6 +187,8 @@ ETCD_ADVERTISE_CLIENT_URLS="https://127.0.0.1:2379,https://0.0.0.0:2379"
 ETCD_INITIAL_CLUSTER="etcd-01=https://192.168.10.162:2380,etcd-02=https://192.168.10.190:2380,etcd-03=https://192.168.10.191:2380"
 ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster"
 ETCD_INITIAL_CLUSTER_STATE="new"
+#kube-apiserver 使用 Etcd v3接口，而 flannel 使用 v2接口， 
+#Etcd v3.4 发布说明，从 3.4 版本开始，默认已经关闭 v2 接口协议。建议直接在 Etcd 启动参数添加 --enable_v2 'true'
 ETCD_ENABLE_V2="true"
 
 #[Security]
