@@ -7,7 +7,7 @@ ${BOOTSTRAP_TOKEN},kubelet-bootstrap,10001,"system:kubelet-bootstrap"
 EOF
 
 export KUBE_APISERVER="https://192.168.10.162:6443"
-
+#kubelet-bootstrap.kubeconfig
 kubectl config set-cluster kubernetes \
 --certificate-authority=/data/apps/kubernetes/pki/ca.pem \
 --embed-certs=true \

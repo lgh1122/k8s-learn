@@ -84,7 +84,6 @@ cat > etcd-csr.json << EOF
 EOF
 
 cfssl gencert -initca etcd-ca-csr.json | cfssljson -bare etcd-ca
-
 cfssl gencert -ca=etcd-ca.pem -ca-key=etcd-ca-key.pem -config=ca-config.json  -profile=kubernetes  etcd-csr.json | cfssljson -bare etcd
 
 
