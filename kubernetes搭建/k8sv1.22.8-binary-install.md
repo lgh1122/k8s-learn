@@ -70,7 +70,7 @@ ssh-copy-id -i .ssh/id_rsa.pub k8s-node01
 
 ```
 
-    
+
 
 ## 2.3 系统环境初始化
 ### 关闭selinux 阿里云ECS默认关闭
@@ -83,9 +83,10 @@ yum install ntpdate -y
 ntpdate time1.aliyun.com
 # 把时间同步做成计划任务
 crontab -e
-* */1 * * * /usr/sbin/ntpdate   time1.aliyun.com
+#增加以下任务
+    * */1 * * * /usr/sbin/ntpdate   time1.aliyun.com
 # 重启crond服务
-service crond restart
+systemctl restart crond
 ```
 ### 关闭交换分区swap 阿里云ECS默认关闭
 ```powershell
@@ -609,9 +610,9 @@ EOF
 cfssl gencert -initca ca-csr.json | cfssljson -bare ca
 ```
 ### kube-apiserver 证书
-注意：如果 hosts 字段不为空则需要指定授权使用该证书的 IP 或域名列表。 
+注意：如果 hosts 字段不为空则需要指定授权使用该证书的 IP 或域名列表。
 由于该证书后续被     kubernetes master 集群使用，需要将master节点的IP都填上，
-同时还需要填写 service 网络的首个IP。(一般是 kube-apiserver 
+同时还需要填写 service 网络的首个IP。(一般是 kube-apiserver
 指定的 service-cluster-ip-range 网段的第一个IP，如 10.99.0.1)
 负载均衡器的ip也需要指定
 ```powershell
@@ -688,7 +689,7 @@ cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=/root/etcd-ssl/ca-config.jso
 
 ```
 ### kube-scheduler证书
-hosts 列表包含所有 kube-scheduler 节点 IP 即为master节点ip，可以多写几个； 
+hosts 列表包含所有 kube-scheduler 节点 IP 即为master节点ip，可以多写几个；
 CN 为 system:kube-scheduler、
 O 为 system:kube-scheduler，kubernetes 内置的 ClusterRoleBindings system:kube-scheduler 将赋予 kube-scheduler 工作所需的权限
 ```powershell    
@@ -1758,7 +1759,7 @@ kubectl apply -f tomcat.yaml
     64 bytes from 10.88.91.2: seq=3 ttl=64 time=0.079 ms
 
 每个节点都必须要能访问Kubernetes的kubernetes svc 443和kube-dns的service 53
-    
+
     #在宿主机执行
         telnet 10.99.0.1 443
         Trying 10.99.0.1...
@@ -1780,7 +1781,7 @@ kubectl apply -f tomcat.yaml
 cd /root && mkdir dashboard && cd dashboard
 curl -O https://soft.8090st.com/kubernetes/dashboard/kubernetes-dashboard.yaml
 ```
-#生成证书
+生成证书
 ```powershell 
 openssl genrsa -des3 -passout pass:x -out dashboard.pass.key 2048
 openssl rsa -passin pass:x -in dashboard.pass.key -out dashboard.key
@@ -1854,4 +1855,426 @@ kubectl describe secret -n kube-system $(kubectl get secrets -n kube-system | gr
 这里我们可以看到dashboard的pod被调度到192.168.10.191节点上，service对应的nodePort为31000
 所以访问链接为：https://192.168.10.191:31000
 
+# 五、扩容多Master（高可用架构）
+Kubernetes作为容器集群系统，通过健康检查+重启策略实现了Pod故障自我修复能力，通过调度算法实现将Pod分布式部署，并保持预期副本数，根据Node失效状态自动在其他Node拉起Pod，实现了应用层的高可用性。
 
+针对Kubernetes集群，高可用性还应包含以下两个层面的考虑：Etcd数据库的高可用性和Kubernetes Master组件的高可用性。 而Etcd我们已经采用3个节点组建集群实现高可用，本节将对Master节点高可用进行说明和实施。
+
+Master节点扮演着总控中心的角色，通过不断与工作节点上的Kubelet和kube-proxy进行通信来维护整个集群的健康工作状态。如果Master节点故障，将无法使用kubectl工具或者API做任何集群管理。
+
+Master节点主要有三个服务kube-apiserver、kube-controller-manager和kube-scheduler，其中kube-controller-manager和kube-scheduler组件自身通过选择机制已经实现了高可用，所以Master高可用主要针对kube-apiserver组件，而该组件是以HTTP API提供服务，因此对他高可用与Web服务器类似，增加负载均衡器对其负载均衡即可，并且可水平扩容。
+
+## 5.1 环境说明
+
+|K8S集群角色	|Ip	|主机名|	安装的组件|
+| -------- | ------------| ------------ | ---- |
+|控制节点	|192.168.10.162|	k8s-master01|	etcd、docker、kube-apiserver、kube-controller-manager、kube-scheduler、kube-proxy、kubelet、flanneld、keepalived、nginx|
+|控制节点	|192.168.10.163|	k8s-master02|	etcd、docker、kube-apiserver、kube-controller-manager、kube-scheduler、kube-proxy、kubelet、flanneld、keepalived、nginx|
+|负载均衡器|192.168.10.88|    k8s-master-lb  | keepalived虚拟IP Vip |
+
+## 5.2 部署Master02 节点
+
+现在需要再增加一台新服务器，作为Master02节点，IP是192.168.10.163。
+
+Master02 与已部署的Master01所有操作一致。所以我们只需将Master1所有K8s文件拷贝过来，再修改下服务器IP和主机名启动即可
+
+### 创建目录
+```powershell
+mkdir -pv /data/apps/etcd/{ssl} 
+mkdir -pv /data/apps/kubernetes/{pki,log,etc,certs}
+mkdir -pv /data/apps/kubernetes/log/{apiserver,controller-manager,scheduler,kubelet,kube-proxy}
+```	
+
+
+### 拷贝Master01上所有K8s文件和etcd证书到Master02
+```powershell
+scp -r /data/apps/etcd/ssl 192.168.10.163:/data/apps/etcd/
+scp -r /usr/lib/systemd/system/kube* root@192.168.10.163:/usr/lib/systemd/system
+scp -r /data/apps/kubernetes/certs  root@192.168.10.163:/data/apps/kubernetes
+scp -r /data/apps/kubernetes/etc  root@192.168.10.163:/data/apps/kubernetes
+scp -r /data/apps/kubernetes/pki  root@192.168.10.163:/data/apps/kubernetes
+scp -r /data/apps/kubernetes/server  root@192.168.10.163:/data/apps/kubernetes
+scp -r ~/.kube root@192.168.10.163:~
+#flannel相关
+scp -r /usr/lib/systemd/system/flanneld.service root@192.168.10.163:/usr/lib/systemd/system
+scp -r /usr/lib/systemd/system/docker.service root@192.168.10.163:/usr/lib/systemd/system
+scp -r /usr/lib/systemd/system/docker.service.d root@192.168.10.163:/usr/lib/systemd/system
+
+```
+### 删除证书文件
+```powershell
+# 删除kubelet证书和kubeconfig文件 这些服务启动会生成
+rm -f /data/apps/kubernetes/etc/kubelet.kubeconfig 
+rm -f /data/apps/kubernetes/pki/kubelet*
+```
+
+### 修改apiserver、kubelet和kube-proxy配置文件为本地IP
+```powershell
+sed -i "s/bind-address=192.168.10.162/bind-address=192.168.10.163/g" /data/apps/kubernetes/etc/kube-apiserver.conf
+	sed -i "s/advertise-address=192.168.10.162/advertise-address=192.168.10.163/g" /data/apps/kubernetes/etc/kube-apiserver.conf
+	
+	sed -i "s/hostname-override=192.168.10.162/hostname-override=192.168.10.163/g" /data/apps/kubernetes/etc/kubelet.conf
+	sed -i "s/address: 192.168.10.162/address: 192.168.10.163/g" /data/apps/kubernetes/etc/kubelet-config.yml
+```
+
+### 启动
+```powershell
+systemctl daemon-reload
+systemctl enable kube-apiserver kube-controller-manager kube-scheduler kubelet kube-proxy
+
+systemctl daemon-reload&&systemctl enable flanneld
+systemctl start flanneld
+systemctl restart docker
+systemctl status flanneld
+```
+### 配置kubectl
+```powershell
+#配置环境变量，安装docker命令补全
+yum install bash-completion -y
+cat > /etc/profile.d/kubernetes.sh << EOF
+K8S_HOME=/data/apps/kubernetes
+export PATH=\$K8S_HOME/server/bin:\$PATH
+source <(kubectl completion bash)
+EOF
+source /etc/profile.d/kubernetes.sh
+kubectl version
+```
+```powershell
+#rm -rf $HOME/.kube
+#mkdir -p $HOME/.kube
+#cp /data/apps/kubernetes/etc/admin.conf $HOME/.kube/config
+sed -i "s/192.168.10.162:6443/192.168.10.163:6443/g" ~/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl get node
+kubectl get componentstatuses
+
+```
+
+### 查看集群状态
+```powershell
+[root@192 ~]# kubectl get cs
+Warning: v1 ComponentStatus is deprecated in v1.19+
+NAME                 STATUS    MESSAGE                         ERROR
+controller-manager   Healthy   ok                              
+scheduler            Healthy   ok                              
+etcd-2               Healthy   {"health":"true","reason":""}   
+etcd-0               Healthy   {"health":"true","reason":""}   
+etcd-1               Healthy   {"health":"true","reason":""} 
+
+```
+
+### 批准kubelet证书申请
+```powershell
+[root@192 kubernetes]# kubectl get csr
+NAME                                                   AGE   SIGNERNAME                                    REQUESTOR           REQUESTEDDURATION   CONDITION
+node-csr-1Gp3vELEkg5-_vUdB3lh33Lx2iwls4mgmk8p3fRIcEw   14m   kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   <none>              Pending
+# 授权请求
+kubectl certificate approve node-csr-1Gp3vELEkg5-_vUdB3lh33Lx2iwls4mgmk8p3fRIcEw
+
+    certificatesigningrequest.certificates.k8s.io/node-csr-1Gp3vELEkg5-_vUdB3lh33Lx2iwls4mgmk8p3fRIcEw approved
+# 查看node
+[root@192 etc]# kubectl get node
+NAME             STATUS   ROLES    AGE     VERSION
+192.168.10.162   Ready    master   2d18h   v1.22.8
+192.168.10.163   Ready    <none>   17s     v1.22.8
+192.168.10.190   Ready    node     2d18h   v1.22.8
+192.168.10.191   Ready    node     2d18h   v1.22.8
+
+#设置集群角色
+kubectl label nodes 192.168.10.163 node-role.kubernetes.io/master=MASTER-02
+
+```
+## 5.3 部署Nginx+Keepalived高可用负载均衡器
+kube-apiserver高可用架构图：
+```powershell
+                                            ----->       master-apiserver01
+                                    ----->
+                        - nginx-master  
+                    -           |    
+客户端 ------> VIP         Keepalived        ----->      master-apiserver02
+                    -           |
+                        - nginx-backup              
+                                    ----->  ----->      master-apiserver03
+```
+Nginx是一个主流Web服务和反向代理服务器，这里用四层实现对apiserver实现负载均衡。
+
+Keepalived是一个主流高可用软件，基于VIP绑定实现服务器双机热备，在上述拓扑中，Keepalived主要根据Nginx运行状态判断是否需要故障转移（漂移VIP），例如当Nginx主节点挂掉，VIP会自动绑定在Nginx备节点，从而保证VIP一直可用，实现Nginx高可用。
+
+注1：为了节省机器，这里与K8s Master节点机器复用。也可以独立于k8s集群之外部署，只要nginx与apiserver能通信就行。
+
+注2：如果你是在公有云上，一般都不支持keepalived，那么你可以直接用它们的负载均衡器产品，直接负载均衡多台Master kube-apiserver，架构与上面一样。
+
+在两台Master节点操作：
+
+1）安装软件包（主/备）
+```powershell
+yum install epel-release -y
+yum install nginx keepalived -y
+```
+2）Nginx配置文件（主备一样）
+```powershell
+cat > /etc/nginx/nginx.conf << EOF
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log;
+pid /run/nginx.pid;
+
+include /usr/share/nginx/modules/*.conf;
+
+events {
+    worker_connections 1024;
+}
+
+# 四层负载均衡，为两台Master apiserver组件提供负载均衡
+stream {
+
+    log_format  main  '$remote_addr $upstream_addr - [$time_local] $status $upstream_bytes_sent';
+
+    access_log  /var/log/nginx/k8s-access.log  main;
+
+    upstream k8s-apiserver {
+       server 192.168.10.162:6443;   # Master1 APISERVER IP:PORT
+       server 192.168.10.163:6443;   # Master2 APISERVER IP:PORT
+    }
+    
+    server {
+       listen 16443; # 由于nginx与master节点复用，这个监听端口不能是6443，否则会冲突
+       proxy_pass k8s-apiserver;
+    }
+}
+
+http {
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/nginx/access.log  main;
+
+    sendfile            on;
+    tcp_nopush          on;
+    tcp_nodelay         on;
+    keepalive_timeout   65;
+    types_hash_max_size 2048;
+
+    include             /etc/nginx/mime.types;
+    default_type        application/octet-stream;
+
+    server {
+        listen       80 default_server;
+        server_name  _;
+
+        location / {
+        }
+    }
+}
+EOF
+```
+
+
+3）keepalived配置文件（Nginx Master）
+```powershell
+cat > /etc/keepalived/keepalived.conf << EOF
+global_defs { 
+   notification_email { 
+     acassen@firewall.loc 
+     failover@firewall.loc 
+     sysadmin@firewall.loc 
+   } 
+   notification_email_from Alexandre.Cassen@firewall.loc  
+   smtp_server 127.0.0.1 
+   smtp_connect_timeout 30 
+   router_id NGINX_MASTER
+} 
+
+vrrp_script check_nginx {
+    script "/etc/keepalived/check_nginx.sh"
+}
+
+vrrp_instance VI_1 { 
+    state MASTER 
+    interface ens33 # 修改为实际网卡名
+    virtual_router_id 51 # VRRP 路由 ID实例，每个实例是唯一的 
+    priority 100    # 优先级，备服务器设置 90 
+    advert_int 1    # 指定VRRP 心跳包通告间隔时间，默认1秒 
+    authentication { 
+        auth_type PASS      
+        auth_pass 1111 
+    }  
+    # 虚拟IP
+    virtual_ipaddress { 
+        192.168.10.88/24
+    } 
+    track_script {
+        check_nginx
+    } 
+}
+EOF
+```
+参数说明：
+
+vrrp_script：指定检查nginx工作状态脚本（根据nginx状态判断是否故障转移）
+
+virtual_ipaddress：虚拟IP（VIP）
+
+准备上述配置文件中检查nginx运行状态的脚本：
+```powershell
+cat > /etc/keepalived/check_nginx.sh  << "EOF"
+#!/bin/bash
+count=$(ss -antp |grep 16443 |egrep -cv "grep|$$")
+
+if [ "$count" -eq 0 ];then
+    exit 1
+else
+    exit 0
+fi
+EOF
+```
+```powershell
+chmod +x /etc/keepalived/check_nginx.sh
+```
+注：keepalived根据脚本返回状态码（0为工作正常，非0不正常）判断是否故障转移
+
+4）keepalived配置文件（Nginx Backup）
+```powershell
+cat > /etc/keepalived/keepalived.conf << EOF
+global_defs { 
+   notification_email { 
+     acassen@firewall.loc 
+     failover@firewall.loc 
+     sysadmin@firewall.loc 
+   } 
+   notification_email_from Alexandre.Cassen@firewall.loc  
+   smtp_server 127.0.0.1 
+   smtp_connect_timeout 30 
+   router_id NGINX_BACKUP
+} 
+
+vrrp_script check_nginx {
+    script "/etc/keepalived/check_nginx.sh"
+}
+
+vrrp_instance VI_1 { 
+    state BACKUP 
+    interface ens33
+    virtual_router_id 51 # VRRP 路由 ID实例，每个实例是唯一的 
+    priority 90
+    advert_int 1
+    authentication { 
+        auth_type PASS      
+        auth_pass 1111 
+    }  
+    virtual_ipaddress { 
+        192.168.10.88/24
+    } 
+    track_script {
+        check_nginx
+    } 
+}
+EOF
+```
+准备上述配置文件中检查nginx运行状态的脚本：
+```powershell
+cat > /etc/keepalived/check_nginx.sh  << "EOF"
+#!/bin/bash
+count=$(ss -antp |grep 16443 |egrep -cv "grep|$$")
+
+if [ "$count" -eq 0 ];then
+    exit 1
+else
+    exit 0
+fi
+EOF
+chmod +x /etc/keepalived/check_nginx.sh
+```
+5）启动并设置开机启动
+```powershell
+systemctl daemon-reload
+systemctl restart nginx keepalived
+systemctl enable nginx keepalived
+
+```
+nginx 启动报错
+
+    nginx: [emerg] unknown directive "stream" in /etc/nginx/nginx.conf:1
+解决方法
+
+    # 安装nginx源
+    curl -o /etc/yum.repos.d/epel.repo http://mirrors.aliyun.com/repo/epel-7.repo
+    # 先安装
+    yum -y install epel-release
+    
+    #应该是缺少modules模块
+    yum -y install nginx-all-modules.noarch
+    然后在用nginx -t就好了
+    [root@k8s-node2 ~]# nginx -t
+    nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+    nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+6）查看keepalived工作状态
+
+    #ip a
+    可以看到，在ens33网卡绑定了10.0.0.88 虚拟IP，说明工作正常
+    2: ens33: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000
+    link/ether 00:0c:29:6a:ea:1f brd ff:ff:ff:ff:ff:ff
+    inet 192.168.10.162/24 brd 192.168.10.255 scope global noprefixroute ens33
+       valid_lft forever preferred_lft forever
+    inet 192.168.10.88/24 scope global secondary ens33
+       valid_lft forever preferred_lft forever
+    inet6 fe80::c67e:63e:6354:7b09/64 scope link noprefixroute
+
+7）Nginx+Keepalived高可用测试
+
+关闭主节点Nginx，测试VIP是否漂移到备节点服务器。
+
+在Nginx Master执行systemctl stop nginx;
+
+在Nginx Backup，ip addr命令查看已成功绑定VIP。
+
+8）访问负载均衡器测试
+
+找K8s集群中任意一个节点，使用curl查看K8s版本测试，使用VIP访问:
+```powershell
+curl -k https://192.168.10.88:16443/version
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {
+    
+  },
+  "status": "Failure",
+  "message": "Unauthorized",
+  "reason": "Unauthorized",
+  "code": 401
+}
+```
+可以正确获取到K8s版本信息，说明负载均衡器搭建正常。该请求数据流程：curl -> vip(nginx) -> apiserver
+
+通过查看Nginx日志也可以看到转发apiserver IP：
+```powershell
+tail -f /var/log/nginx/k8s-access.log
+10.0.0.73 10.0.0.71:6443 - [12/Apr/2021:18:08:43 +0800] 200 411
+10.0.0.73 10.0.0.72:6443, 10.0.0.71:6443 - [12/Apr/2021:18:08:43 +0800] 200 0, 411
+
+```
+9）修改所有Worker Node连接LB VIP
+
+试想下，虽然我们增加了Master02 Node和负载均衡器，但是我们是从单Master架构扩容的，也就是说目前所有的Worker Node组件连接都还是Master01 Node，如果不改为连接VIP走负载均衡器，那么Master还是单点故障。
+
+因此接下来就是要改所有Worker Node（kubectl get node命令查看到的节点）组件配置文件，由原来192.168.10.162修改为192.168.10.88（VIP）。
+
+在所有Worker Node执行：
+```powershell
+sed -i 's#192.168.10.162:6443#192.168.10.88:16443#' /data/apps/kubernetes/etc/*
+systemctl restart kubelet kube-proxy
+```
+检查节点状态：
+```powershell
+[root@192 etc]# kubectl get node
+NAME             STATUS   ROLES    AGE     VERSION
+192.168.10.162   Ready    master   2d18h   v1.22.8
+192.168.10.163   Ready    master   46m     v1.22.8
+192.168.10.190   Ready    node     2d18h   v1.22.8
+192.168.10.191   Ready    node     2d18h   v1.22.8
+
+```
+至此，一套完整的 Kubernetes 高可用集群就部署完成了！
