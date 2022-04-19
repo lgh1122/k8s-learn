@@ -2395,6 +2395,57 @@ kubectl label nodes 192.168.10.192 node-role.kubernetes.io/node=NODE-03
 
 ```
 
+### 测试
+部署nginx
+```powershell
+cat > nginx-deployments.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.14.2
+        ports:
+        - containerPort: 80
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+   app: nginx
+  name: nginx-service
+spec:
+  ports:
+  - port: 80
+    nodePort: 31090
+  selector:
+    app: nginx
+  type: NodePort
+
+
+
+EOF
+
+
+kubectl  apply -f nginx-deployments.yaml
+
+```
+
+
 systemctl status kube-proxy 日志报错，需升级内核版本
 can't set sysctl net/ipv4/vs/conn_reuse_mode, kernel version must be at least 4.1
 ```powershell
