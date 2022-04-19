@@ -1830,9 +1830,33 @@ wget https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.6.1/
         image: registry.cn-hangzhou.aliyuncs.com/google_containers/metrics-server:v0.6.1
  
 #sed -i "s/k8s.gcr.io\/metrics-server\/metrics-server/registry.cn-hangzhou.aliyuncs.com\/google_containers\/metrics-server/g" metrics-server.yaml
-# 部署
-kubectl apply -f metrics-server.yaml
+
 ```
+dashboard 显示图表
+需修改metrics-server.yaml 增加两行数据
+```powershell 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+name: system:metrics-server
+rules:
+- apiGroups:
+    - ""
+      resources:
+    - pods
+    - nodes
+    - nodes/stats
+    - namespaces
+    - configmaps
+    - nodes/stats # 添加
+    - pods/stats # 添加
+``` 
+
+部署
+```powershell 
+kubectl apply -f metrics-server.yaml
+``` 
+
 验证
 ```powershell  
 [root@192 ~]# kubectl top node
