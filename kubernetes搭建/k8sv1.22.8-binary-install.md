@@ -1774,17 +1774,51 @@ kubectl apply -f tomcat.yaml
         curl: (52) Empty reply from server
 
 ## 4.15 配置metrics-server
+Metrics Server是一个可扩展的、高效的容器资源度量源，用于Kubernetes内置的自动伸缩管道。
+
+Metrics Server从Kubelets收集资源指标，并通过Metrics API在Kubernetes apiserver中公开它们，供水平Pod自动扩缩容和垂直Pod自动扩缩容使用。kubectl top还可以访问Metrics API，从而更容易调试自动伸缩管道。
+
+metrics Server 特点
+
+    Kubernetes Metrics Server 是 Cluster 的核心监控数据的聚合器，kubeadm 默认是不部署的。
+    Metrics Server 供 Dashboard 等其他组件使用，是一个扩展的 APIServer，依赖于 API Aggregator。
+    所以，在安装 Metrics Server 之前需要先在 kube-apiserver 中开启 API Aggregator。
+    Metrics API 只可以查询当前的度量数据，并不保存历史数据。
+    Metrics API URI 为 /apis/metrics.k8s.io/，在 k8s.io/metrics 下维护。
+    必须部署 metrics-server 才能使用该 API，metrics-server 通过调用 kubelet Summary API 获取数据。
+
+kube-api-server 配置文件添加 创建proxy-client证书
+本文档部署时候已经添加 添加完成后重启所有节点api-server
+```powershell 
+  vim /data/apps/kubernetes/etc/kube-apiserver.conf
+  --runtime-config=api/all=true \
+  --requestheader-allowed-names=aggregator \
+  --requestheader-group-headers=X-Remote-Group \
+  --requestheader-username-headers=X-Remote-User \
+  --requestheader-extra-headers-prefix=X-Remote-Extra- \
+  --requestheader-client-ca-file=/data/apps/kubernetes/pki/ca.pem \
+  --proxy-client-cert-file=/data/apps/kubernetes/pki/proxy-client.pem \
+  --proxy-client-key-file=/data/apps/kubernetes/pki/proxy-client-key.pem \
+``` 
+
 **master节点上操作**
-安装 metrics-server
-```powershell  
+
+安装 metrics server ,版本 v0.6.1
+下载yaml文件
+```powershell 
 cd /root && mkdir metrics-server && cd metrics-server
 wget https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.6.1/components.yaml -O metrics-server.yaml
-# vim metrics-server.yaml 
-# 修改image
-# registry.cn-hangzhou.aliyuncs.com/google_containers/metrics-server:v0.6.1 
-sed -i "s/k8s.gcr.io\/metrics-server\/metrics-server/registry.cn-hangzhou.aliyuncs.com\/google_containers\/metrics-server/g" metrics-server.yaml
 
-# 本次Kubernetes环境仅作为本机测试使用，可以修改之前的apply的components.yaml文件，添加“--Kubelet-insecure-tls”参数，如下所示（具体内容跟前后都已经省略）：
+``` 
+但是需要修改下里面的启动参数才能正常使用，修改如下：
+另外部署时的镜像地址是从谷歌拉取，需要为国内地址
+添加了以下配置项：
+   
+    --kubelet-insecure-tls 不要验证Kubelets提供的服务证书的CA。仅用于测试目的
+    --kubelet-preferred-address-types=InternalDNS,InternalIP,ExternalDNS,ExternalIP,Hostname 
+    添加了InternalDNS,ExternalDNS，这个配置项的意思是在确定连接到特定节点的地址时使用的节点地址类型的优先级
+    (默认[Hostname,InternalDNS,InternalIP,ExternalDNS,ExternalIP])
+```powershell  
 # vim metrics-server.yaml  
      - args:
         - --cert-dir=/tmp
@@ -1794,17 +1828,38 @@ sed -i "s/k8s.gcr.io\/metrics-server\/metrics-server/registry.cn-hangzhou.aliyun
         - --metric-resolution=15s
         - --kubelet-insecure-tls
         image: registry.cn-hangzhou.aliyuncs.com/google_containers/metrics-server:v0.6.1
-
-
+ 
+#sed -i "s/k8s.gcr.io\/metrics-server\/metrics-server/registry.cn-hangzhou.aliyuncs.com\/google_containers\/metrics-server/g" metrics-server.yaml
+# 部署
 kubectl apply -f metrics-server.yaml
+```
+验证
+```powershell  
+[root@192 ~]# kubectl top node
+NAME             CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+192.168.10.162   158m         7%     1180Mi          68%       
+192.168.10.163   101m         5%     1005Mi          58%       
+192.168.10.190   68m          3%     586Mi           34%       
+192.168.10.191   63m          3%     792Mi           46%       
+192.168.10.192   38m          1%     326Mi           17% 
+
+#查看指定pod的资源使用情况
+# kubectl top pods -n kube-system metrics-server-6f796dd456-z7hb2
+NAME                             CPU(cores)   MEMORY(bytes)   
+metrics-server-6f796dd456-z7hb2   3m           14Mi
+
+#kubectl top pods -n kube-system
+NAME                              CPU(cores)   MEMORY(bytes)   
+coredns-c77755696-sd849           1m           17Mi            
+metrics-server-6f796dd456-z7hb2   3m           14Mi  
 ```
 
 ## 4.16 配置dashboard
-暂未验证
+
 
 ```powershell  
 cd /root && mkdir dashboard && cd dashboard
-curl -O https://soft.8090st.com/kubernetes/dashboard/kubernetes-dashboard.yaml
+wget -O dashboard-server2.4.0.yaml https://raw.githubusercontent.com/kubernetes/dashboard/v2.4.0/aio/deploy/recommended.yaml
 ```
 生成证书
 ```powershell 
@@ -1844,6 +1899,21 @@ spec:
 部署
 ```powershell
 kubectl apply -f kubernetes-dashboard.yaml
+namespace/kubernetes-dashboard created
+serviceaccount/kubernetes-dashboard created
+service/kubernetes-dashboard created
+secret/kubernetes-dashboard-certs created
+secret/kubernetes-dashboard-csrf created
+secret/kubernetes-dashboard-key-holder created
+configmap/kubernetes-dashboard-settings created
+role.rbac.authorization.k8s.io/kubernetes-dashboard created
+clusterrole.rbac.authorization.k8s.io/kubernetes-dashboard created
+rolebinding.rbac.authorization.k8s.io/kubernetes-dashboard created
+clusterrolebinding.rbac.authorization.k8s.io/kubernetes-dashboard created
+deployment.apps/kubernetes-dashboard created
+service/dashboard-metrics-scraper created
+deployment.apps/dashboard-metrics-scraper created
+
 ```
 
 配置dashboard令牌
@@ -1868,17 +1938,17 @@ kubectl describe secret -n kube-system $(kubectl get secrets -n kube-system | gr
 登录dashboard
 
     通过 node 节点 ip+端口号访问
-    # kubectl get svc,pods -n kube-system -o wide
-    NAME                           TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                  AGE   SELECTOR
-    service/kube-dns               ClusterIP   10.99.0.2   <none>        53/UDP,53/TCP,9153/TCP   46h   k8s-app=kube-dns
-    service/kubernetes-dashboard   NodePort    10.99.0.3   <none>        443:31000/TCP            45h   k8s-app=kubernetes-dashboard
+    # kubectl get svc,pods -n kubernetes-dashboard -o wide
+    NAME                                TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)         AGE   SELECTOR
+    service/dashboard-metrics-scraper   ClusterIP   10.99.47.210    <none>        8000/TCP        84s   k8s-app=dashboard-metrics-scraper
+    service/kubernetes-dashboard        NodePort    10.99.234.216   <none>        443:31000/TCP   84s   k8s-app=kubernetes-dashboard
     
-    NAME                                       READY   STATUS    RESTARTS   AGE   IP           NODE           NOMINATED NODE   READINESS GATES
-    pod/coredns-6dcff984f9-gflpx               1/1     Running   1          42h   10.88.91.2   192.168.10.191   <none>           <none>
-    pod/kubernetes-dashboard-6c87554b5-cf7nt   1/1     Running   0          29h   10.88.91.12   192.168.10.191   <none>           <none>
+    NAME                                            READY   STATUS    RESTARTS   AGE   IP            NODE             NOMINATED NODE   READINESS GATES
+    pod/dashboard-metrics-scraper-c45b7869d-xwj8l   1/1     Running   0          86s   10.88.101.3   192.168.10.163   <none>           <none>
+    pod/kubernetes-dashboard-777bc4f569-smt86       1/1     Running   0          86s   10.88.97.3    192.168.10.192   <none>           <none>
 
-这里我们可以看到dashboard的pod被调度到192.168.10.191节点上，service对应的nodePort为31000
-所以访问链接为：https://192.168.10.191:31000
+这里我们可以看到dashboard的pod被调度到192.168.10.163节点上，service对应的nodePort为31000
+所以访问链接为：https://192.168.10.192:31000/
 
 # 五、扩容多Master（高可用架构）
 Kubernetes作为容器集群系统，通过健康检查+重启策略实现了Pod故障自我修复能力，通过调度算法实现将Pod分布式部署，并保持预期副本数，根据Node失效状态自动在其他Node拉起Pod，实现了应用层的高可用性。
