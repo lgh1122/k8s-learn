@@ -1773,10 +1773,35 @@ kubectl apply -f tomcat.yaml
         curl 10.99.0.2:53
         curl: (52) Empty reply from server
 
-
-## 4.15 配置dashboard
-暂未验证
+## 4.15 配置metrics-server
 **master节点上操作**
+安装 metrics-server
+```powershell  
+cd /root && mkdir metrics-server && cd metrics-server
+wget https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.6.1/components.yaml -O metrics-server.yaml
+# vim metrics-server.yaml 
+# 修改image
+# registry.cn-hangzhou.aliyuncs.com/google_containers/metrics-server:v0.6.1 
+sed -i "s/k8s.gcr.io\/metrics-server\/metrics-server/registry.cn-hangzhou.aliyuncs.com\/google_containers\/metrics-server/g" metrics-server.yaml
+
+# 本次Kubernetes环境仅作为本机测试使用，可以修改之前的apply的components.yaml文件，添加“--Kubelet-insecure-tls”参数，如下所示（具体内容跟前后都已经省略）：
+# vim metrics-server.yaml  
+     - args:
+        - --cert-dir=/tmp
+        - --secure-port=4443
+        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+        - --kubelet-use-node-status-port
+        - --metric-resolution=15s
+        - --kubelet-insecure-tls
+        image: registry.cn-hangzhou.aliyuncs.com/google_containers/metrics-server:v0.6.1
+
+
+kubectl apply -f metrics-server.yaml
+```
+
+## 4.16 配置dashboard
+暂未验证
+
 ```powershell  
 cd /root && mkdir dashboard && cd dashboard
 curl -O https://soft.8090st.com/kubernetes/dashboard/kubernetes-dashboard.yaml
