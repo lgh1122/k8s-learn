@@ -101,6 +101,10 @@ cat /etc/fstab.bak |grep -v swap >> /etc/fstab
 systemctl disable firewalld
 systemctl stop firewalld
 ```
+### 安装基础软件包
+```powershell
+yum install -y yum-utils device-mapper-persistent-data lvm2 wget net-tools nfs-utils lrzsz gcc gcc-c++ make cmake libxml2-devel openssl-devel curl curl-devel unzip sudo ntp libaio-devel wget vim ncurses-devel autoconf automake zlib-devel  python-devel epel-release openssh-server socat  ipvsadm conntrack ntpdate telnet rsync
+```
 ### 安装iptables
 ```powershell
 yum -y install iptables-services
@@ -207,10 +211,6 @@ lsmod | grep -e ip_vs -e nf_conntrack
 
 ```
 
-### 安装基础软件包
-```powershell
-yum install -y yum-utils device-mapper-persistent-data lvm2 wget net-tools nfs-utils lrzsz gcc gcc-c++ make cmake libxml2-devel openssl-devel curl curl-devel unzip sudo ntp libaio-devel wget vim ncurses-devel autoconf automake zlib-devel  python-devel epel-release openssh-server socat  ipvsadm conntrack ntpdate telnet rsync
-```
 ### 安装docker
 ```powershell
 sudo yum update -y
@@ -2006,12 +2006,12 @@ Keepalived是一个主流高可用软件，基于VIP绑定实现服务器双机�
 
 在两台Master节点操作：
 
-1）安装软件包（主/备）
+### 安装软件包（主/备）
 ```powershell
 yum install epel-release -y
 yum install nginx keepalived -y
 ```
-2）Nginx配置文件（主备一样）
+### Nginx配置文件（主备一样）
 ```powershell
 cat > /etc/nginx/nginx.conf << EOF
 user nginx;
@@ -2071,7 +2071,7 @@ EOF
 ```
 
 
-3）keepalived配置文件（Nginx Master）
+### keepalived配置文件（Nginx Master）
 ```powershell
 cat > /etc/keepalived/keepalived.conf << EOF
 global_defs { 
@@ -2134,7 +2134,7 @@ chmod +x /etc/keepalived/check_nginx.sh
 ```
 注：keepalived根据脚本返回状态码（0为工作正常，非0不正常）判断是否故障转移
 
-4）keepalived配置文件（Nginx Backup）
+### keepalived配置文件（Nginx Backup）
 ```powershell
 cat > /etc/keepalived/keepalived.conf << EOF
 global_defs { 
@@ -2186,7 +2186,7 @@ fi
 EOF
 chmod +x /etc/keepalived/check_nginx.sh
 ```
-5）启动并设置开机启动
+### 启动并设置开机启动
 ```powershell
 systemctl daemon-reload
 systemctl restart nginx keepalived
@@ -2210,7 +2210,7 @@ nginx 启动报错
     nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
     nginx: configuration file /etc/nginx/nginx.conf test is successful
 
-6）查看keepalived工作状态
+### 查看keepalived工作状态
 
     #ip a
     可以看到，在ens33网卡绑定了10.0.0.88 虚拟IP，说明工作正常
@@ -2222,7 +2222,7 @@ nginx 启动报错
        valid_lft forever preferred_lft forever
     inet6 fe80::c67e:63e:6354:7b09/64 scope link noprefixroute
 
-7）Nginx+Keepalived高可用测试
+### Nginx+Keepalived高可用测试
 
 关闭主节点Nginx，测试VIP是否漂移到备节点服务器。
 
@@ -2230,7 +2230,7 @@ nginx 启动报错
 
 在Nginx Backup，ip addr命令查看已成功绑定VIP。
 
-8）访问负载均衡器测试
+### 访问负载均衡器测试
 
 找K8s集群中任意一个节点，使用curl查看K8s版本测试，使用VIP访问:
 ```powershell
@@ -2256,7 +2256,7 @@ tail -f /var/log/nginx/k8s-access.log
 10.0.0.73 10.0.0.72:6443, 10.0.0.71:6443 - [12/Apr/2021:18:08:43 +0800] 200 0, 411
 
 ```
-9）修改所有Worker Node连接LB VIP
+### 修改所有Worker Node连接LB VIP
 
 试想下，虽然我们增加了Master02 Node和负载均衡器，但是我们是从单Master架构扩容的，也就是说目前所有的Worker Node组件连接都还是Master01 Node，如果不改为连接VIP走负载均衡器，那么Master还是单点故障。
 
@@ -2265,6 +2265,9 @@ tail -f /var/log/nginx/k8s-access.log
 在所有Worker Node执行：
 ```powershell
 sed -i 's#192.168.10.162:6443#192.168.10.88:16443#' /data/apps/kubernetes/etc/*
+
+sed -i 's#192.168.10.162:6443#192.168.10.88:16443#' ~/.kube/config
+
 systemctl restart kubelet kube-proxy
 ```
 检查节点状态：
@@ -2278,3 +2281,158 @@ NAME             STATUS   ROLES    AGE     VERSION
 
 ```
 至此，一套完整的 Kubernetes 高可用集群就部署完成了！
+
+# 六、增加node节点
+现在需要再增加一台新服务器，作为Node03节点，IP是192.168.10.192。
+
+Node03 与已部署的Node01所有操作一致。所以我们只需将Node01所有K8s文件拷贝过来，再修改下服务器IP和主机名启动即可
+
+### 创建目录
+```powershell
+mkdir -pv /data/apps/etcd/{ssl} 
+mkdir -pv /data/apps/kubernetes/{pki,log,etc,certs}
+mkdir -pv /data/apps/kubernetes/log/{apiserver,controller-manager,scheduler,kubelet,kube-proxy}
+```	
+
+
+### 拷贝Node01上所有K8s文件和etcd证书到Node03
+```powershell
+scp -r /data/apps/etcd/ssl 192.168.10.192:/data/apps/etcd/
+scp -r /usr/lib/systemd/system/kube* root@192.168.10.192:/usr/lib/systemd/system
+scp -r /data/apps/kubernetes/certs  root@192.168.10.192:/data/apps/kubernetes
+scp -r /data/apps/kubernetes/etc  root@192.168.10.192:/data/apps/kubernetes
+scp -r /data/apps/kubernetes/pki  root@192.168.10.192:/data/apps/kubernetes
+scp -r /data/apps/kubernetes/node  root@192.168.10.192:/data/apps/kubernetes
+scp -r ~/.kube root@192.168.10.192:~
+#flannel相关
+scp -r /usr/lib/systemd/system/flanneld.service root@192.168.10.192:/usr/lib/systemd/system
+scp -r /usr/lib/systemd/system/docker.service root@192.168.10.192:/usr/lib/systemd/system
+scp -r /usr/lib/systemd/system/docker.service.d root@192.168.10.192:/usr/lib/systemd/system
+
+```
+### 删除证书文件
+```powershell
+# 删除kubelet证书和kubeconfig文件 这些服务启动会生成
+rm -f /data/apps/kubernetes/etc/kubelet.kubeconfig 
+rm -f /data/apps/kubernetes/pki/kubelet*
+```
+
+### 修改kubelet和kube-proxy配置文件为本地IP
+```powershell
+
+	sed -i "s/hostname-override=192.168.10.190/hostname-override=192.168.10.192/g" /data/apps/kubernetes/etc/kubelet.conf
+	sed -i "s/address: 192.168.10.190/address: 192.168.10.192/g" /data/apps/kubernetes/etc/kubelet-config.yml
+```
+
+### 启动
+```powershell
+systemctl daemon-reload
+systemctl enable kubelet kube-proxy
+systemctl start kubelet kube-proxy
+
+systemctl daemon-reload&&systemctl enable flanneld
+systemctl start flanneld
+systemctl restart docker
+systemctl status flanneld
+```
+### 配置kubectl
+```powershell
+#配置环境变量，安装docker命令补全
+yum install bash-completion -y
+cat > /etc/profile.d/kubernetes.sh << EOF
+K8S_HOME=/data/apps/kubernetes
+export PATH=\$K8S_HOME/node/bin:\$PATH
+source <(kubectl completion bash)
+EOF
+source /etc/profile.d/kubernetes.sh
+kubectl version
+```
+```powershell
+#rm -rf $HOME/.kube
+#mkdir -p $HOME/.kube
+#cp /data/apps/kubernetes/etc/admin.conf $HOME/.kube/config
+#已配置高可用ip
+#sed -i "s/192.168.10.162:6443/192.168.10.163:6443/g" ~/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl get node
+kubectl get componentstatuses
+
+```
+
+### 查看集群状态
+```powershell
+[root@192 ~]# kubectl get cs
+Warning: v1 ComponentStatus is deprecated in v1.19+
+NAME                 STATUS    MESSAGE                         ERROR
+controller-manager   Healthy   ok                              
+scheduler            Healthy   ok                              
+etcd-2               Healthy   {"health":"true","reason":""}   
+etcd-0               Healthy   {"health":"true","reason":""}   
+etcd-1               Healthy   {"health":"true","reason":""} 
+
+```
+
+### 批准kubelet证书申请
+```powershell
+[root@192 kubernetes]# kubectl get csr
+NAME                                                   AGE   SIGNERNAME                                    REQUESTOR           REQUESTEDDURATION   CONDITION
+node-csr-1Gp3vELEkg5-_vUdB3lh33Lx2iwls4mgmk8p3fRIcEw   14m   kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   <none>              Pending
+# 授权请求
+kubectl certificate approve node-csr-1Gp3vELEkg5-_vUdB3lh33Lx2iwls4mgmk8p3fRIcEw
+
+    certificatesigningrequest.certificates.k8s.io/node-csr-1Gp3vELEkg5-_vUdB3lh33Lx2iwls4mgmk8p3fRIcEw approved
+# 查看node
+[root@192 etc]# kubectl get node
+NAME             STATUS   ROLES    AGE     VERSION
+192.168.10.162   Ready    master   2d18h   v1.22.8
+192.168.10.163   Ready    <none>   17s     v1.22.8
+192.168.10.190   Ready    node     2d18h   v1.22.8
+192.168.10.191   Ready    node     2d18h   v1.22.8
+192.168.10.192   Ready    <none>     17s   v1.22.8
+
+#设置集群角色
+kubectl label nodes 192.168.10.192 node-role.kubernetes.io/node=NODE-03
+
+```
+
+systemctl status kube-proxy 日志报错，需升级内核版本
+can't set sysctl net/ipv4/vs/conn_reuse_mode, kernel version must be at least 4.1
+```powershell
+为 RHEL-8或 CentOS-8配置源
+yum install https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm
+
+为 RHEL-7 SL-7 或 CentOS-7 安装 ELRepo 
+yum install https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm
+
+查看可用安装包
+yum  --disablerepo="*"  --enablerepo="elrepo-kernel"  list  available
+
+安装最新的内核
+# 我这里选择的是稳定版kernel-ml   如需更新长期维护版本kernel-lt  
+yum  --enablerepo=elrepo-kernel  install  kernel-ml
+
+查看已安装那些内核
+rpm -qa | grep kernel
+kernel-3.10.0-1127.el7.x86_64
+kernel-ml-5.17.3-1.el7.elrepo.x86_64
+kernel-tools-3.10.0-1160.62.1.el7.x86_64
+kernel-3.10.0-1160.62.1.el7.x86_64
+kernel-tools-libs-3.10.0-1160.62.1.el7.x86_64
+kernel-headers-3.10.0-1160.62.1.el7.x86_64
+
+
+查看默认内核
+grubby --default-kernel
+/boot/vmlinuz-3.10.0-1160.62.1.el7.x86_64
+
+
+若不是最新的使用命令设置
+grubby --set-default /boot/vmlinuz-「您的内核版本」.x86_64
+grubby --set-default /boot/vmlinuz-5.17.3-1.el7.elrepo.x86_64
+
+重启生效
+reboot
+
+整合命令为：
+yum install https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm -y ; yum  --disablerepo="*"  --enablerepo="elrepo-kernel"  list  available -y ; yum  --enablerepo=elrepo-kernel  install  kernel-ml -y ; grubby --default-kernel ; reboot
+```
