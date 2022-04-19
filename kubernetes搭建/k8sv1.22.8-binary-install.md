@@ -1896,6 +1896,13 @@ openssl req -new -key dashboard.key -out dashboard.csr
 openssl x509 -req -sha256 -days 365 -in dashboard.csr -signkey dashboard.key -out dashboard.crt
 ```  
 将创建的证书拷贝到其他 node 节点
+```powershell 
+cp dashboard.crt dashboard.csr dashboard.key /data/apps/kubernetes/certs
+scp -r dashboard.crt dashboard.csr dashboard.key 192.168.10.190:/data/apps/kubernetes/certs
+scp -r dashboard.crt dashboard.csr dashboard.key 192.168.10.163:/data/apps/kubernetes/certs
+scp -r dashboard.crt dashboard.csr dashboard.key 192.168.10.191:/data/apps/kubernetes/certs
+scp -r dashboard.crt dashboard.csr dashboard.key 192.168.10.192:/data/apps/kubernetes/certs
+``` 
 修改kubernetes-dashboard.yaml文件
 1.修改证书挂载方式
 ```powershell 
